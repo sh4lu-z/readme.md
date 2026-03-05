@@ -5,7 +5,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "MISSING_TOKEN", message: "Please set GITHUB_TOKEN in Vercel settings" });
   }
 
-  // Private + Public ඔක්කොම ගන්න Query එක
+  // වෙනස්කම: 'isFork: false' අයින් කළා. දැන් Forks එක්කම ඔක්කොම එනවා.
   const query = `
     query {
       viewer {
@@ -14,22 +14,20 @@ export default async function handler(req, res) {
         followers {
           totalCount
         }
-        following {
-          totalCount
-        }
-        createdAt
         contributionsCollection {
           totalCommitContributions
           totalPullRequestContributions
           totalIssueContributions
           restrictedContributionsCount 
         }
-        repositories(first: 100, ownerAffiliations: OWNER, isFork: false) {
+        repositories(first: 100, ownerAffiliations: OWNER, orderBy: {field: PUSHED_AT, direction: DESC}) {
           totalCount
           nodes {
+            name
             stargazerCount
             forkCount
             isPrivate
+            isFork
             languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
               edges {
                 size
@@ -69,42 +67,50 @@ export default async function handler(req, res) {
     const contribs = viewer.contributionsCollection;
     const repos = viewer.repositories.nodes;
 
-    // --- Data එකතු කරමු ---
+    // --- Data Calculation ---
     let totalStars = 0;
-    let totalForks = 0;
+    let totalForks = 0; // This is forks OF your repos
     let privateRepos = 0;
     let publicRepos = 0;
+    let myForks = 0; // Repos YOU forked
     let languageStats = {};
     let totalSize = 0;
 
     repos.forEach(repo => {
       totalStars += repo.stargazerCount;
       totalForks += repo.forkCount;
+      
       if (repo.isPrivate) {
         privateRepos++;
       } else {
         publicRepos++;
       }
 
-      if (repo.languages && repo.languages.edges) {
-        repo.languages.edges.forEach(edge => {
-          const { size, node } = edge;
-          if (!languageStats[node.name]) {
-            languageStats[node.name] = { size: 0, color: node.color };
-          }
-          languageStats[node.name].size += size;
-          totalSize += size;
-        });
+      if (repo.isFork) {
+        myForks++;
+      }
+
+      // භාෂා ගණනය කිරීම (Forks වල භාෂා සාමාන්‍යයෙන් stats වලට ගන්නේ නෑ, ඒත් ඔයාට ඕනේ නම් මේ if එක අයින් කරන්න)
+      if (!repo.isFork) { 
+        if (repo.languages && repo.languages.edges) {
+          repo.languages.edges.forEach(edge => {
+            const { size, node } = edge;
+            if (!languageStats[node.name]) {
+              languageStats[node.name] = { size: 0, color: node.color };
+            }
+            languageStats[node.name].size += size;
+            totalSize += size;
+          });
+        }
       }
     });
 
-    // Private Commits එක්කම එකතු කරමු
+    // Stats
     const totalCommits = contribs.totalCommitContributions + (contribs.restrictedContributionsCount || 0);
     const totalPRs = contribs.totalPullRequestContributions;
     const totalIssues = contribs.totalIssueContributions;
-    const totalRepos = viewer.repositories.totalCount;
+    const totalRepos = viewer.repositories.totalCount; // දැන් මේක 33 පෙන්නන්න ඕනේ
     const totalCollabs = viewer.collaborations ? viewer.collaborations.totalCount : 0;
-    const totalFollowers = viewer.followers.totalCount;
 
     // --- Language Percentages ---
     const langsArray = Object.keys(languageStats).map(name => {
@@ -123,9 +129,9 @@ export default async function handler(req, res) {
         .header { font-weight: 700; font-size: 18px; fill: #58a6ff; }
         .stat-label { font-size: 13px; fill: #8b949e; font-weight: 500; }
         .stat-value { font-weight: 700; font-size: 14px; fill: #e6edf3; }
+        .small-text { font-size: 10px; fill: #8b949e; }
         .lang-text { font-size: 11px; fill: #8b949e; font-weight: 500; }
         .card-bg { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
-        .icon { fill: #8b949e; }
       </style>
     `;
 
@@ -150,7 +156,7 @@ export default async function handler(req, res) {
            
            <g transform="translate(160, 0)">
              <text x="0" y="0" class="stat-label">📦 Total Repos</text>
-             <text x="100" y="0" class="stat-value">${totalRepos} <tspan fill="#8b949e" font-weight="400" font-size="11">(${publicRepos} Pub / ${privateRepos} Priv)</tspan></text>
+             <text x="100" y="0" class="stat-value">${totalRepos} <tspan class="small-text">(${privateRepos} Priv / ${myForks} Forks)</tspan></text>
              
              <text x="0" y="25" class="stat-label">🐛 Issues</text>
              <text x="100" y="25" class="stat-value">${totalIssues}</text>
@@ -192,7 +198,7 @@ export default async function handler(req, res) {
         <circle cx="${legendX}" cy="-3" r="4" fill="${lang.color || '#ccc'}"/>
         <text x="${legendX + 8}" y="0" class="lang-text">${lang.name} ${lang.percentage}%</text>
         `;
-        legendX += 80; // Spacing between items
+        legendX += 80;
     });
 
     svgContent += `</g></svg>`;
