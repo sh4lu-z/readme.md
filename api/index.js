@@ -5,6 +5,33 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "MISSING_TOKEN", message: "Please set GITHUB_TOKEN in Vercel settings" });
   }
 
+  // --- 1. Original GitHub-Readme-Stats Logic Constants ---
+  // මේවා තමයි Official Repo එකේ පාවිච්චි කරන "Mean Values" (සාමාන්‍ය අගයන්)
+  const COMMITS_MEDIAN = 1000;
+  const COMMITS_WEIGHT = 2;
+  
+  const PRS_MEDIAN = 50;
+  const PRS_WEIGHT = 3;
+  
+  const ISSUES_MEDIAN = 25;
+  const ISSUES_WEIGHT = 1;
+  
+  const STARS_MEDIAN = 50;
+  const STARS_WEIGHT = 4;
+  
+  const FOLLOWERS_MEDIAN = 10;
+  const FOLLOWERS_WEIGHT = 1;
+
+  // Reviews ගණන් ගන්නේ නැති වුනොත් අවුලක් නෑ (API එකෙන් සමහර විට එන්නේ නෑ)
+  const TOTAL_WEIGHT = COMMITS_WEIGHT + PRS_WEIGHT + ISSUES_WEIGHT + STARS_WEIGHT + FOLLOWERS_WEIGHT;
+
+  // --- Helper: Exponential CDF Function ---
+  // මේකෙන් තමයි ලකුණු 0-100 අතරට හදන්නේ (Diminishing Returns)
+  // උදාහරණ: Commits 1000 ක් තියෙන කෙනාට 50% ක් හම්බෙනවා. 5000ක් තිබ්බත් 100% වෙන්නේ නෑ.
+  const calculateScore = (value, median) => {
+    return 1 - Math.pow(0.5, value / median);
+  };
+
   const query = `
     query {
       viewer {
@@ -22,7 +49,7 @@ export default async function handler(req, res) {
         repositories(first: 100, ownerAffiliations: OWNER, isFork: false) {
           totalCount
           nodes {
-            stargazerCount  
+            stargazerCount
             forkCount
             languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
               edges {
@@ -67,14 +94,14 @@ export default async function handler(req, res) {
     const contribs = viewer.contributionsCollection;
     const repos = viewer.repositories.nodes;
 
-    // --- Data Calculation ---
+    // --- Data Aggregation ---
     let totalStars = 0;
     let totalForks = 0;
     let languageStats = {};
     let totalSize = 0;
 
     repos.forEach(repo => {
-      totalStars += repo.stargazerCount; // Corrected Field Name
+      totalStars += repo.stargazerCount;
       totalForks += repo.forkCount;
       if (repo.languages && repo.languages.edges) {
         repo.languages.edges.forEach(edge => {
@@ -95,29 +122,46 @@ export default async function handler(req, res) {
     const totalCollabs = viewer.collaborations ? viewer.collaborations.totalCount : 0;
     const followers = viewer.followers.totalCount;
 
-    // --- Rank Logic ---
-    // Score Formula: Commits*2 + PRs*3 + Issues*1 + Stars*4 + Followers*2 + Repos*1
-    const score = (totalCommits * 2) + (totalPRs * 3) + (totalIssues * 1) + (totalStars * 4) + (followers * 2) + totalRepos;
+    // --- 2. Real Rank Calculation (The Hard Mode) ---
     
-    let rank = 'B';
-    if (score > 5000) rank = 'S+';
-    else if (score > 2500) rank = 'S';
-    else if (score > 1000) rank = 'A+';
-    else if (score > 500) rank = 'A';
-    else if (score > 200) rank = 'B+';
+    // Calculate individual scores (0 to 1)
+    const commitScore = calculateScore(totalCommits, COMMITS_MEDIAN);
+    const prScore = calculateScore(totalPRs, PRS_MEDIAN);
+    const issueScore = calculateScore(totalIssues, ISSUES_MEDIAN);
+    const starScore = calculateScore(totalStars, STARS_MEDIAN);
+    const followerScore = calculateScore(followers, FOLLOWERS_MEDIAN);
 
+    // Calculate Weighted Average
+    const weightedSum = 
+      (commitScore * COMMITS_WEIGHT) +
+      (prScore * PRS_WEIGHT) +
+      (issueScore * ISSUES_WEIGHT) +
+      (starScore * STARS_WEIGHT) +
+      (followerScore * FOLLOWERS_WEIGHT);
+
+    const totalScore = (weightedSum / TOTAL_WEIGHT) * 100;
+
+    // Determine Rank based on Percentile
+    let rank = 'C';
+    if (totalScore >= 95) rank = 'S+'; // Top 5%
+    else if (totalScore >= 85) rank = 'S'; // Top 15%
+    else if (totalScore >= 65) rank = 'A+'; // Top 35%
+    else if (totalScore >= 45) rank = 'A'; // Top 55%
+    else if (totalScore >= 30) rank = 'A-';
+    else if (totalScore >= 15) rank = 'B+';
+    else if (totalScore >= 5) rank = 'B';
+    
     // --- Language Percentages ---
     const langsArray = Object.keys(languageStats).map(name => {
       const percentage = totalSize > 0 ? ((languageStats[name].size / totalSize) * 100).toFixed(1) : 0;
       return { name, percentage, color: languageStats[name].color };
     }).sort((a, b) => b.percentage - a.percentage).slice(0, 5);
 
-    // --- SVG Generation ---
+    // --- SVG Generation (Same Modern Design) ---
     const width = 450;
-    const height = 195; // Adjusted height for compactness
+    const height = 195;
     const displayName = viewer.name || viewer.login;
 
-    // --- Stylish CSS (Dark Theme + Neon Accents) ---
     const css = `
       <style>
         .container { font-family: 'Segoe UI', Ubuntu, Sans-Serif; fill: #c9d1d9; }
@@ -131,6 +175,10 @@ export default async function handler(req, res) {
       </style>
     `;
 
+    // Progress circle calculation (based on score)
+    const circumference = 220; // 2 * pi * 35 approx
+    const strokeDashoffset = circumference - (totalScore / 100) * circumference;
+
     let svgContent = `
       <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
         ${css}
@@ -140,7 +188,7 @@ export default async function handler(req, res) {
 
         <g transform="translate(360, 65)">
           <circle cx="0" cy="0" r="35" fill="none" stroke="#21262d" stroke-width="5"/>
-          <circle cx="0" cy="0" r="35" fill="none" stroke="#58a6ff" stroke-width="5" stroke-dasharray="220" stroke-dashoffset="${220 - (Math.min(score, 5000)/5000)*220}" transform="rotate(-90)" stroke-linecap="round"/>
+          <circle cx="0" cy="0" r="35" fill="none" stroke="#58a6ff" stroke-width="5" stroke-dasharray="${circumference}" stroke-dashoffset="${strokeDashoffset}" transform="rotate(-90)" stroke-linecap="round"/>
           <text x="0" y="12" class="rank-text">${rank}</text>
           <text x="0" y="48" class="rank-label">RANK</text>
         </g>
@@ -178,7 +226,6 @@ export default async function handler(req, res) {
             <g clip-path="url(#bar-clip)">
     `;
 
-    // Draw Progress Bars
     let xOffset = 0;
     langsArray.forEach(lang => {
         const barWidth = (parseFloat(lang.percentage) / 100) * 400;
@@ -195,7 +242,6 @@ export default async function handler(req, res) {
         <g transform="translate(25, 170)">
     `;
 
-    // Draw Legend with Colors
     let legendX = 0;
     langsArray.forEach(lang => {
         svgContent += `
