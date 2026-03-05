@@ -225,9 +225,12 @@ export default async function handler(req, res) {
 
     svgContent += `</svg>`;
 
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate');
-    res.status(200).send(svgContent);
+   
+   res.setHeader('Content-Type', 'image/svg+xml');
+   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+   res.setHeader('Pragma', 'no-cache');
+   res.setHeader('Expires', '0');
+   res.status(200).send(svgContent);
 
   } catch (error) {
     console.error(error);
