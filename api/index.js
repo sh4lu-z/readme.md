@@ -84,7 +84,6 @@ export default async function handler(req, res) {
 
       if (repo.isFork) myForks++;
 
-      // Forks වල භාෂා ගණන් ගන්නේ නෑ (ඔයාගේම වැඩ විතරක් පෙන්නන්න)
       if (!repo.isFork) { 
         if (repo.languages && repo.languages.edges) {
           repo.languages.edges.forEach(edge => {
@@ -106,16 +105,25 @@ export default async function handler(req, res) {
     const totalCollabs = viewer.collaborations ? viewer.collaborations.totalCount : 0;
 
     // --- Language Sorting (Top 10) ---
-    // මෙතන තමයි වෙනස: .slice(0, 10) කළා
     const langsArray = Object.keys(languageStats).map(name => {
       const percentage = totalSize > 0 ? ((languageStats[name].size / totalSize) * 100).toFixed(1) : 0;
       return { name, percentage, color: languageStats[name].color };
     }).sort((a, b) => b.percentage - a.percentage).slice(0, 10);
 
-    // --- SVG Design ---
+    // --- SVG Design Adjustments ---
+    
+    // 1. Layout Settings
+    const columns = 3;  // කලින් 5 තිබ්බේ, දැන් 3 යි. (දිග නම් වලට ඉඩ හම්බෙනවා)
+    const colWidth = 140; // එක නමකට 140px ඉඩක් දුන්නා.
+    const rowHeight = 25; // පේලි අතර පරතරය චුට්ටක් වැඩි කළා.
+    
+    // 2. Dynamic Height Calculation
+    // Header + Stats (190px) + Legend Rows needed
+    const rowsNeeded = Math.ceil(langsArray.length / columns);
+    const legendHeight = rowsNeeded * rowHeight;
     const width = 450;
-    // උස පොඩ්ඩක් වැඩි කළා භාෂා ලැයිස්තුවට ඉඩ තියන්න (240px)
-    const height = 240; 
+    const height = 190 + legendHeight + 20; // Auto adjust height based on rows
+
     const displayName = viewer.name || viewer.login;
 
     const css = `
@@ -187,19 +195,17 @@ export default async function handler(req, res) {
         <g transform="translate(25, 190)">
     `;
 
-    // ලස්සනට Grid එකක් වගේ පෙන්නන Logic එක
-    // එක පේලියක අයිතම 5ක් විතරක් තියනවා. ඊට වැඩි නම් ඊළඟ පේලියට වැටෙනවා.
-    const columns = 5; 
-    const colWidth = 80;
-    const rowHeight = 20;
-
     langsArray.forEach((lang, index) => {
-        const x = (index % columns) * colWidth;
-        const y = Math.floor(index / columns) * rowHeight;
+        // Calculate Grid Position (3 Columns)
+        const colIndex = index % columns;
+        const rowIndex = Math.floor(index / columns);
+        
+        const x = colIndex * colWidth;
+        const y = rowIndex * rowHeight;
         
         svgContent += `
         <circle cx="${x}" cy="${y - 3}" r="4" fill="${lang.color || '#ccc'}"/>
-        <text x="${x + 10}" y="${y}" class="lang-text">${lang.name} ${lang.percentage}%</text>
+        <text x="${x + 12}" y="${y}" class="lang-text">${lang.name} ${lang.percentage}%</text>
         `;
     });
 
