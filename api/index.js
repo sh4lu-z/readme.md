@@ -5,35 +5,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "MISSING_TOKEN", message: "Please set GITHUB_TOKEN in Vercel settings" });
   }
 
-  // --- THE REAL OFFICIAL CONSTANTS (100% Accurate) ---
-  // Source: github-readme-stats/src/calculateRank.js
-  
-  const COMMITS_MEDIAN = 1000; // අලුත්ම Official අගය (කලින් 250 යි, දැන් 1000 යි - පට්ට අමාරුයි)
-  const COMMITS_WEIGHT = 2;
-  
-  const PRS_MEDIAN = 50;
-  const PRS_WEIGHT = 3;
-  
-  const ISSUES_MEDIAN = 25;
-  const ISSUES_WEIGHT = 1;
-  
-  const STARS_MEDIAN = 50;
-  const STARS_WEIGHT = 4;
-  
-  const FOLLOWERS_MEDIAN = 10;
-  const FOLLOWERS_WEIGHT = 1;
-
-  // Reviews are usually optional/extra in some versions, but core rank uses these 5.
-  const TOTAL_WEIGHT = COMMITS_WEIGHT + PRS_WEIGHT + ISSUES_WEIGHT + STARS_WEIGHT + FOLLOWERS_WEIGHT;
-
-  // --- Exponential CDF Function ---
-  // x = ඔයාගේ අගය (උදා: Commits 1500)
-  // median = සම්මත අගය (1000)
-  // මේ function එකෙන් තමයි ලකුණු 0 සිට 1 දක්වා හදන්නේ.
-  const calculateScore = (value, median) => {
-    return 1 - Math.pow(0.5, value / median);
-  };
-
+  // Private + Public ඔක්කොම ගන්න Query එක
   const query = `
     query {
       viewer {
@@ -42,18 +14,22 @@ export default async function handler(req, res) {
         followers {
           totalCount
         }
+        following {
+          totalCount
+        }
+        createdAt
         contributionsCollection {
           totalCommitContributions
           totalPullRequestContributions
           totalIssueContributions
-          restrictedContributionsCount
-          totalPullRequestReviewContributions 
+          restrictedContributionsCount 
         }
         repositories(first: 100, ownerAffiliations: OWNER, isFork: false) {
           totalCount
           nodes {
             stargazerCount
             forkCount
+            isPrivate
             languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
               edges {
                 size
@@ -93,15 +69,23 @@ export default async function handler(req, res) {
     const contribs = viewer.contributionsCollection;
     const repos = viewer.repositories.nodes;
 
-    // --- Data Aggregation ---
+    // --- Data එකතු කරමු ---
     let totalStars = 0;
     let totalForks = 0;
+    let privateRepos = 0;
+    let publicRepos = 0;
     let languageStats = {};
     let totalSize = 0;
 
     repos.forEach(repo => {
       totalStars += repo.stargazerCount;
       totalForks += repo.forkCount;
+      if (repo.isPrivate) {
+        privateRepos++;
+      } else {
+        publicRepos++;
+      }
+
       if (repo.languages && repo.languages.edges) {
         repo.languages.edges.forEach(edge => {
           const { size, node } = edge;
@@ -114,73 +98,34 @@ export default async function handler(req, res) {
       }
     });
 
+    // Private Commits එක්කම එකතු කරමු
     const totalCommits = contribs.totalCommitContributions + (contribs.restrictedContributionsCount || 0);
     const totalPRs = contribs.totalPullRequestContributions;
     const totalIssues = contribs.totalIssueContributions;
     const totalRepos = viewer.repositories.totalCount;
     const totalCollabs = viewer.collaborations ? viewer.collaborations.totalCount : 0;
-    const followers = viewer.followers.totalCount;
+    const totalFollowers = viewer.followers.totalCount;
 
-    // --- 100% REAL RANK CALCULATION ---
-    
-    // 1. Calculate Score for each metric (0 to 1)
-    const commitScore = calculateScore(totalCommits, COMMITS_MEDIAN);
-    const prScore = calculateScore(totalPRs, PRS_MEDIAN);
-    const issueScore = calculateScore(totalIssues, ISSUES_MEDIAN);
-    const starScore = calculateScore(totalStars, STARS_MEDIAN);
-    const followerScore = calculateScore(followers, FOLLOWERS_MEDIAN);
-
-    // 2. Weighted Average
-    const weightedSum = 
-      (commitScore * COMMITS_WEIGHT) +
-      (prScore * PRS_WEIGHT) +
-      (issueScore * ISSUES_WEIGHT) +
-      (starScore * STARS_WEIGHT) +
-      (followerScore * FOLLOWERS_WEIGHT);
-
-    // 3. Final Percentile (0 to 100)
-    const percentile = (weightedSum / TOTAL_WEIGHT) * 100;
-
-    // 4. Determine Rank (Based on Top %)
-    // Official Standard:
-    // S  = Top 1%   (Percentile >= 99)
-    // A+ = Top 12.5% (Percentile >= 87.5)
-    // A  = Top 25%  (Percentile >= 75)
-    // A- = Top 37.5% (Percentile >= 62.5)
-    // B+ = Top 50%  (Percentile >= 50)
-    let rank = 'C';
-    if (percentile >= 99) rank = 'S';
-    else if (percentile >= 87.5) rank = 'A+';
-    else if (percentile >= 75) rank = 'A';
-    else if (percentile >= 62.5) rank = 'A-';
-    else if (percentile >= 50) rank = 'B+';
-    else if (percentile >= 37.5) rank = 'B';
-    else if (percentile >= 25) rank = 'B-';
-    
-    // --- UI Generation ---
+    // --- Language Percentages ---
     const langsArray = Object.keys(languageStats).map(name => {
       const percentage = totalSize > 0 ? ((languageStats[name].size / totalSize) * 100).toFixed(1) : 0;
       return { name, percentage, color: languageStats[name].color };
-    }).sort((a, b) => b.percentage - a.percentage).slice(0, 5);
+    }).sort((a, b) => b.percentage - a.percentage).slice(0, 6);
 
+    // --- SVG Design ---
     const width = 450;
-    const height = 195;
+    const height = 215;
     const displayName = viewer.name || viewer.login;
-
-    // Circle Progress Calculation
-    const circumference = 220; 
-    const strokeDashoffset = circumference - (percentile / 100) * circumference;
 
     const css = `
       <style>
         .container { font-family: 'Segoe UI', Ubuntu, Sans-Serif; fill: #c9d1d9; }
         .header { font-weight: 700; font-size: 18px; fill: #58a6ff; }
-        .stat-label { font-size: 12px; fill: #8b949e; font-weight: 500; }
+        .stat-label { font-size: 13px; fill: #8b949e; font-weight: 500; }
         .stat-value { font-weight: 700; font-size: 14px; fill: #e6edf3; }
-        .rank-text { font-weight: 800; font-size: 38px; fill: #f0e130; text-anchor: middle; filter: drop-shadow(0px 0px 4px rgba(240, 225, 48, 0.4)); }
-        .rank-label { font-weight: 700; font-size: 10px; fill: #8b949e; letter-spacing: 1.5px; text-anchor: middle; }
-        .lang-text { font-size: 10px; fill: #8b949e; font-weight: 500; }
+        .lang-text { font-size: 11px; fill: #8b949e; font-weight: 500; }
         .card-bg { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
+        .icon { fill: #8b949e; }
       </style>
     `;
 
@@ -189,47 +134,42 @@ export default async function handler(req, res) {
         ${css}
         <rect x="0.5" y="0.5" width="${width-1}" height="${height-1}" rx="10" ry="10" class="card-bg"/>
 
-        <text x="25" y="30" class="header">${displayName}'s GitHub Stats</text>
+        <text x="25" y="35" class="header">${displayName}'s GitHub Stats</text>
 
-        <g transform="translate(360, 65)">
-          <circle cx="0" cy="0" r="35" fill="none" stroke="#21262d" stroke-width="5"/>
-          <circle cx="0" cy="0" r="35" fill="none" stroke="#58a6ff" stroke-width="5" stroke-dasharray="${circumference}" stroke-dashoffset="${strokeDashoffset}" transform="rotate(-90)" stroke-linecap="round"/>
-          <text x="0" y="12" class="rank-text">${rank}</text>
-          <text x="0" y="48" class="rank-label">RANK</text>
-        </g>
-
-        <g transform="translate(25, 60)">
+        <g transform="translate(25, 70)">
            <g>
              <text x="0" y="0" class="stat-label">⭐ Total Stars</text>
-             <text x="90" y="0" class="stat-value">${totalStars}</text>
+             <text x="110" y="0" class="stat-value">${totalStars}</text>
              
-             <text x="0" y="22" class="stat-label">🔄 Commits</text>
-             <text x="90" y="22" class="stat-value">${totalCommits}</text>
+             <text x="0" y="25" class="stat-label">🔄 Commits</text>
+             <text x="110" y="25" class="stat-value">${totalCommits}</text>
              
-             <text x="0" y="44" class="stat-label">🔀 PRs</text>
-             <text x="90" y="44" class="stat-value">${totalPRs}</text>
+             <text x="0" y="50" class="stat-label">🔀 PRs</text>
+             <text x="110" y="50" class="stat-value">${totalPRs}</text>
            </g>
-           <g transform="translate(150, 0)">
-             <text x="0" y="0" class="stat-label">📦 Repos</text>
-             <text x="80" y="0" class="stat-value">${totalRepos}</text>
+           
+           <g transform="translate(160, 0)">
+             <text x="0" y="0" class="stat-label">📦 Total Repos</text>
+             <text x="100" y="0" class="stat-value">${totalRepos} <tspan fill="#8b949e" font-weight="400" font-size="11">(${publicRepos} Pub / ${privateRepos} Priv)</tspan></text>
              
-             <text x="0" y="22" class="stat-label">🐛 Issues</text>
-             <text x="80" y="22" class="stat-value">${totalIssues}</text>
+             <text x="0" y="25" class="stat-label">🐛 Issues</text>
+             <text x="100" y="25" class="stat-value">${totalIssues}</text>
              
-             <text x="0" y="44" class="stat-label">👥 Contribs</text>
-             <text x="80" y="44" class="stat-value">${totalCollabs}</text>
+             <text x="0" y="50" class="stat-label">👥 Contribs</text>
+             <text x="100" y="50" class="stat-value">${totalCollabs}</text>
            </g>
         </g>
 
-        <line x1="25" y1="130" x2="425" y2="130" stroke="#21262d" stroke-width="1"/>
+        <line x1="25" y1="145" x2="425" y2="145" stroke="#21262d" stroke-width="1"/>
 
-        <g transform="translate(25, 145)">
+        <g transform="translate(25, 165)">
             <clipPath id="bar-clip">
                 <rect x="0" y="0" width="400" height="8" rx="4"/>
             </clipPath>
             <g clip-path="url(#bar-clip)">
     `;
 
+    // Draw Progress Bars
     let xOffset = 0;
     langsArray.forEach(lang => {
         const barWidth = (parseFloat(lang.percentage) / 100) * 400;
@@ -243,7 +183,7 @@ export default async function handler(req, res) {
             </g>
         </g>
         
-        <g transform="translate(25, 170)">
+        <g transform="translate(25, 190)">
     `;
 
     let legendX = 0;
@@ -252,7 +192,7 @@ export default async function handler(req, res) {
         <circle cx="${legendX}" cy="-3" r="4" fill="${lang.color || '#ccc'}"/>
         <text x="${legendX + 8}" y="0" class="lang-text">${lang.name} ${lang.percentage}%</text>
         `;
-        legendX += 80;
+        legendX += 80; // Spacing between items
     });
 
     svgContent += `</g></svg>`;
