@@ -5,7 +5,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "MISSING_TOKEN", message: "Please set GITHUB_TOKEN in Vercel settings" });
   }
 
-  // වෙනස්කම: 'isFork: false' අයින් කළා. දැන් Forks එක්කම ඔක්කොම එනවා.
   const query = `
     query {
       viewer {
@@ -69,10 +68,10 @@ export default async function handler(req, res) {
 
     // --- Data Calculation ---
     let totalStars = 0;
-    let totalForks = 0; // This is forks OF your repos
+    let totalForks = 0;
     let privateRepos = 0;
     let publicRepos = 0;
-    let myForks = 0; // Repos YOU forked
+    let myForks = 0;
     let languageStats = {};
     let totalSize = 0;
 
@@ -80,17 +79,12 @@ export default async function handler(req, res) {
       totalStars += repo.stargazerCount;
       totalForks += repo.forkCount;
       
-      if (repo.isPrivate) {
-        privateRepos++;
-      } else {
-        publicRepos++;
-      }
+      if (repo.isPrivate) privateRepos++;
+      else publicRepos++;
 
-      if (repo.isFork) {
-        myForks++;
-      }
+      if (repo.isFork) myForks++;
 
-      // භාෂා ගණනය කිරීම (Forks වල භාෂා සාමාන්‍යයෙන් stats වලට ගන්නේ නෑ, ඒත් ඔයාට ඕනේ නම් මේ if එක අයින් කරන්න)
+      // Forks වල භාෂා ගණන් ගන්නේ නෑ (ඔයාගේම වැඩ විතරක් පෙන්නන්න)
       if (!repo.isFork) { 
         if (repo.languages && repo.languages.edges) {
           repo.languages.edges.forEach(edge => {
@@ -105,22 +99,23 @@ export default async function handler(req, res) {
       }
     });
 
-    // Stats
     const totalCommits = contribs.totalCommitContributions + (contribs.restrictedContributionsCount || 0);
     const totalPRs = contribs.totalPullRequestContributions;
     const totalIssues = contribs.totalIssueContributions;
-    const totalRepos = viewer.repositories.totalCount; // දැන් මේක 33 පෙන්නන්න ඕනේ
+    const totalRepos = viewer.repositories.totalCount;
     const totalCollabs = viewer.collaborations ? viewer.collaborations.totalCount : 0;
 
-    // --- Language Percentages ---
+    // --- Language Sorting (Top 10) ---
+    // මෙතන තමයි වෙනස: .slice(0, 10) කළා
     const langsArray = Object.keys(languageStats).map(name => {
       const percentage = totalSize > 0 ? ((languageStats[name].size / totalSize) * 100).toFixed(1) : 0;
       return { name, percentage, color: languageStats[name].color };
-    }).sort((a, b) => b.percentage - a.percentage).slice(0, 6);
+    }).sort((a, b) => b.percentage - a.percentage).slice(0, 10);
 
     // --- SVG Design ---
     const width = 450;
-    const height = 215;
+    // උස පොඩ්ඩක් වැඩි කළා භාෂා ලැයිස්තුවට ඉඩ තියන්න (240px)
+    const height = 240; 
     const displayName = viewer.name || viewer.login;
 
     const css = `
@@ -192,13 +187,20 @@ export default async function handler(req, res) {
         <g transform="translate(25, 190)">
     `;
 
-    let legendX = 0;
-    langsArray.forEach(lang => {
+    // ලස්සනට Grid එකක් වගේ පෙන්නන Logic එක
+    // එක පේලියක අයිතම 5ක් විතරක් තියනවා. ඊට වැඩි නම් ඊළඟ පේලියට වැටෙනවා.
+    const columns = 5; 
+    const colWidth = 80;
+    const rowHeight = 20;
+
+    langsArray.forEach((lang, index) => {
+        const x = (index % columns) * colWidth;
+        const y = Math.floor(index / columns) * rowHeight;
+        
         svgContent += `
-        <circle cx="${legendX}" cy="-3" r="4" fill="${lang.color || '#ccc'}"/>
-        <text x="${legendX + 8}" y="0" class="lang-text">${lang.name} ${lang.percentage}%</text>
+        <circle cx="${x}" cy="${y - 3}" r="4" fill="${lang.color || '#ccc'}"/>
+        <text x="${x + 10}" y="${y}" class="lang-text">${lang.name} ${lang.percentage}%</text>
         `;
-        legendX += 80;
     });
 
     svgContent += `</g></svg>`;
