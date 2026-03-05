@@ -63,10 +63,8 @@ Once deployed, you can use the API URL in your GitHub Profile `README.md`.
 
 ## 👤 Author
 
-<div align="right">
   <a href="https://github.com/sh4lu-z">
     <img src="https://img.shields.io/badge/@sh4lu--z-black?style=for-the-badge&logo=github" alt="sh4lu-z" />
   </a>
-</div>
 
 Give a ⭐️ if you like this project!
